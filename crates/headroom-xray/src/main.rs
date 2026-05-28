@@ -29,14 +29,23 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // We bind `_cli` to verify the parser accepts all defined flags. The
-    // stub does no real work; subsequent tasks replace this body.
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
 
-    // TODO Task 2: Node detection.
+    if cli.xray_debug {
+        tracing_subscriber::fmt()
+            .with_env_filter("headroom_xray=debug")
+            .with_writer(std::io::stderr)
+            .init();
+    }
+
+    if let Err(e) = headroom_xray::node::check() {
+        eprintln!("{e}");
+        std::process::exit(127); // POSIX "command not found" idiom
+    }
+
     // TODO Task 3: spawn npx codeburn and forward stdio.
-    // TODO Tasks 4-7: footer pipeline.
-
-    eprintln!("headroom-xray: scaffolding only — binary not yet wired");
+    // (`cli` field accesses arrive in Task 3+; suppress unused-field warnings for now.)
+    let _ = cli;
+    eprintln!("headroom-xray: Node OK; CodeBurn invocation not yet wired");
     Ok(())
 }
