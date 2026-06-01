@@ -1756,11 +1756,23 @@ class AnthropicHandlerMixin:
                             def update_from_response(self, **_kw: Any) -> None:
                                 pass  # shadow writes are discarded
 
-                        def __init__(self, frozen_count: int, last_orig: list, last_fwd: list):
+                        def __init__(
+                            self,
+                            frozen_count: int,
+                            last_orig: list,
+                            last_fwd: list,
+                            session_id: str,
+                        ):
                             self._tracker = self._Tracker(frozen_count, last_orig, last_fwd)
+                            self._session_id = session_id
 
                         def compute_session_id(self, req: Any, mdl: str, msgs: Any) -> str:
-                            return "shadow-seeded"
+                            # Return the REAL session_id the legacy path computed (#31),
+                            # NOT a constant. The engine keys its compression cache by
+                            # this value; a constant would collapse every session into a
+                            # single cache entry → cross-tenant content bleed in `on` mode
+                            # and contaminated divergence metrics in `shadow`.
+                            return self._session_id
 
                         def get_or_create(self, sid: str, provider: str) -> Any:
                             return self._tracker
@@ -1769,6 +1781,7 @@ class AnthropicHandlerMixin:
                         frozen_count=_snap_frozen_count,
                         last_orig=list(_snap_last_orig),
                         last_fwd=list(_snap_last_fwd),
+                        session_id=session_id,
                     )
 
                     # 4. Build the engine RequestContext. Use original_body_bytes
@@ -1916,11 +1929,22 @@ class AnthropicHandlerMixin:
                             def update_from_response(self, **_kw: Any) -> None:
                                 pass  # "on" writes are discarded (live store owns state)
 
-                        def __init__(self, frozen_count: int, last_orig: list, last_fwd: list):
+                        def __init__(
+                            self,
+                            frozen_count: int,
+                            last_orig: list,
+                            last_fwd: list,
+                            session_id: str,
+                        ):
                             self._tracker = self._Tracker(frozen_count, last_orig, last_fwd)
+                            self._session_id = session_id
 
                         def compute_session_id(self, req: Any, mdl: str, msgs: Any) -> str:
-                            return "engine-on-seeded"
+                            # Return the REAL session_id (#31) — see _ShadowSeededStore.
+                            # In `on` mode the engine DRIVES the forwarded bytes, so a
+                            # constant key here would forward one tenant's cached
+                            # compression into another's request.
+                            return self._session_id
 
                         def get_or_create(self, sid: str, provider: str) -> Any:
                             return self._tracker
@@ -1929,6 +1953,7 @@ class AnthropicHandlerMixin:
                         frozen_count=_snap_frozen_count_on,
                         last_orig=list(_snap_last_orig_on),
                         last_fwd=list(_snap_last_fwd_on),
+                        session_id=session_id,
                     )
 
                     # 4. Build RequestContext — same inputs as shadow block.

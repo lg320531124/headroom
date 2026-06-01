@@ -637,3 +637,57 @@ class TestFlagOn:
         )
         assert proxy.metrics.engine_shadow_divergence_total == before_div
         assert proxy.metrics.engine_shadow_error_total == before_shadow_err
+
+
+# ---------------------------------------------------------------------------
+# 4. #31 — engine compression-cache isolation + per-session keying
+# ---------------------------------------------------------------------------
+
+
+class TestEngineCompressionCacheIsolation:
+    """#31: the engine must use its OWN compression-cache store, keyed by the
+    REAL per-session id — not the proxy's shared store under a constant key.
+
+    Pre-#31 the Anthropic shadow/on seeded stores returned a constant
+    ("shadow-seeded"/"engine-on-seeded") AND the engine was wired to the
+    proxy's shared `_get_compression_cache`. So every conversation collapsed
+    into ONE shared cache entry → cross-tenant content bleed in `on` mode and
+    contaminated divergence metrics in `shadow`.
+    """
+
+    def test_engine_cache_keyed_per_session_and_isolated(self) -> None:
+        client, _ = _make_client(engine_request_path="shadow", optimize=True)
+        proxy = client.app.state.proxy
+
+        # Make the legacy session_id (which the seeded store now forwards to
+        # the engine) vary per request, so two conversations map to two ids.
+        proxy.session_tracker_store.compute_session_id = (
+            lambda request, model, messages: request.headers.get("x-test-session", "default")
+        )
+        fake_tracker = _FakePrefixTracker(frozen_count=0)
+        proxy.session_tracker_store.get_or_create = lambda sid, provider: fake_tracker
+
+        body = {
+            "model": "claude-3-5-sonnet-20241022",
+            "messages": [{"role": "user", "content": "Hello world"}],
+        }
+
+        r1 = client.post("/v1/messages", json=body, headers={**_HEADERS, "x-test-session": "alpha"})
+        r2 = client.post("/v1/messages", json=body, headers={**_HEADERS, "x-test-session": "beta"})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+
+        # No constant-collapse: engine cache keyed by the two REAL session ids.
+        # Pre-#31 this would be {"shadow-seeded"} (a single collapsed entry).
+        assert set(proxy._engine_compression_caches.keys()) == {"alpha", "beta"}, (
+            "engine compression cache must be keyed by the real per-session id; got "
+            f"{sorted(proxy._engine_compression_caches.keys())}"
+        )
+
+        # Isolation: the engine store is a distinct object from the legacy proxy
+        # store, so engine shadow/on activity can never read or mutate the cache
+        # the legacy path serves from.
+        assert proxy._engine_compression_caches is not proxy._compression_caches
+        for sid in ("alpha", "beta"):
+            if sid in proxy._compression_caches:
+                assert proxy._engine_compression_caches[sid] is not proxy._compression_caches[sid]

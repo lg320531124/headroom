@@ -426,6 +426,16 @@ class HeadroomProxy(
         self._compression_caches: dict[str, CompressionCache] = {}
         self._compression_caches_lock = threading.RLock()
 
+        # Engine-private compression-cache store (#31). Wired into the engine's
+        # AnthropicComponents/OpenAIComponents instead of the legacy store above,
+        # so engine activity in shadow/on mode never reads or mutates the
+        # production cache (shadow stays truly observe-only, and a parity bug in
+        # the engine can't corrupt the bytes the legacy path serves). Keyed by
+        # the SAME real session_id the legacy path computes, so engine cache
+        # behavior matches legacy turn-to-turn (no shadow-divergence inflation).
+        self._engine_compression_caches: dict[str, CompressionCache] = {}
+        self._engine_compression_caches_lock = threading.RLock()
+
         self.logger = (
             RequestLogger(
                 log_file=config.log_file,
@@ -759,7 +769,9 @@ class HeadroomProxy(
             pipeline=self.anthropic_pipeline,
             provider=self.anthropic_provider,
             session_tracker_store=engine_session_store,
-            get_compression_cache=self._get_compression_cache,
+            # Engine-private cache store (#31) — NOT self._get_compression_cache.
+            # Isolates engine shadow/on activity from the production cache.
+            get_compression_cache=self._get_engine_compression_cache,
             config=self.config,
             usage_reporter=self.usage_reporter,
         )
@@ -768,7 +780,8 @@ class HeadroomProxy(
             pipeline=self.openai_pipeline,
             provider=self.openai_provider,
             session_tracker_store=engine_session_store,
-            get_compression_cache=self._get_compression_cache,
+            # Engine-private cache store (#31) — see AnthropicComponents above.
+            get_compression_cache=self._get_engine_compression_cache,
             config=self.config,
             usage_reporter=self.usage_reporter,
         )
@@ -893,7 +906,7 @@ class HeadroomProxy(
             raise
 
     def _get_compression_cache(self, session_id: str) -> CompressionCache:
-        """Get or create a CompressionCache for a session.
+        """Get or create a CompressionCache for a session (legacy proxy store).
 
         Thread-safe under `_compression_caches_lock`: a concurrent pair of
         `_get_compression_cache(session_id)` calls (e.g. two async requests
@@ -921,6 +934,33 @@ class HeadroomProxy(
 
                 self._compression_caches[session_id] = CompressionCache()
             return self._compression_caches[session_id]
+
+    def _get_engine_compression_cache(self, session_id: str) -> CompressionCache:
+        """Get or create a CompressionCache in the engine-private store (#31).
+
+        Same semantics as `_get_compression_cache`, but backed by a store
+        isolated from the legacy proxy cache so engine activity in shadow/on
+        mode can never read or mutate the production cache. Wired into the
+        engine's AnthropicComponents/OpenAIComponents in `_build_headroom_engine`.
+        """
+        with self._engine_compression_caches_lock:
+            if session_id not in self._engine_compression_caches:
+                from headroom.cache.compression_cache import CompressionCache
+
+                if len(self._engine_compression_caches) >= MAX_COMPRESSION_CACHE_SESSIONS:
+                    oldest_keys = list(self._engine_compression_caches.keys())[
+                        : MAX_COMPRESSION_CACHE_SESSIONS // 4
+                    ]
+                    for key in oldest_keys:
+                        del self._engine_compression_caches[key]
+                    logger.info(
+                        "Evicted %d engine compression caches (exceeded %d max sessions)",
+                        len(oldest_keys),
+                        MAX_COMPRESSION_CACHE_SESSIONS,
+                    )
+
+                self._engine_compression_caches[session_id] = CompressionCache()
+            return self._engine_compression_caches[session_id]
 
     def _setup_code_aware(self, config: ProxyConfig, transforms: list) -> str:
         """Set up code-aware compression if enabled.
