@@ -65,8 +65,10 @@ class SQLiteBackend:
     CompressionStore, matching the backend protocol contract.
 
     Deserialization is field-filtered: unknown keys in stored JSON are
-    dropped and missing keys fall back to dataclass defaults, so
-    entries written by an older or newer headroom version load cleanly.
+    dropped (forward-compatible with newer versions that add fields).
+    Missing keys load cleanly only when the corresponding
+    ``CompressionEntry`` field has a default; a blob missing a required
+    field (one without a default) raises ``TypeError`` on construction.
     """
 
     def __init__(self, db_path: str | Path | None = None) -> None:

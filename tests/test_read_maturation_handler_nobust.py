@@ -351,7 +351,13 @@ def test_quiesce_turns_config_is_honored(monkeypatch):
 def test_read_maturation_knobs_from_env(monkeypatch):
     """Operators must be able to tune maturation via env vars (the pilot
     playbook says 'pick quiesce_turns')."""
-    from headroom.proxy.server import _proxy_config_from_env
+    from headroom.proxy.server import _MULTI_WORKER_CONFIG_ENV, _proxy_config_from_env
+
+    # _proxy_config_from_env short-circuits on a prebuilt multi-worker JSON
+    # config and ignores the HEADROOM_* vars entirely. Clear it so this test
+    # actually exercises the env-var parsing path it claims to (and isn't
+    # poisoned by a leaked HEADROOM_PROXY_CONFIG_JSON from another test).
+    monkeypatch.delenv(_MULTI_WORKER_CONFIG_ENV, raising=False)
 
     monkeypatch.setenv("HEADROOM_READ_MATURATION", "1")
     monkeypatch.setenv("HEADROOM_READ_MATURATION_QUIESCE_TURNS", "3")

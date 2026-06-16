@@ -133,7 +133,8 @@ CCR_MISS_MESSAGE = (
     "Entry not found or expired. To recover: if the compression marker "
     "references a file Read, re-read that file (the path is in the "
     "marker; disk is the source of truth). If it was command output, "
-    "re-run the command. Store TTL is 30 minutes."
+    "re-run the command. Entries expire after the store TTL "
+    "(default 30 minutes; configurable via HEADROOM_CCR_TTL_SECONDS)."
 )
 
 

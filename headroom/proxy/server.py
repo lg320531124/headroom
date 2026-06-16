@@ -2973,14 +2973,9 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             )
 
         if query:
-            if not store.exists(hash_key, clean_expired=True):
-                raise HTTPException(
-                    status_code=404,
-                    detail=format_retrieval_miss_detail(
-                        store.get_entry_status(hash_key, clean_expired=True)
-                    ),
-                )
-            # Search within cached content
+            # Search within cached content. The get_entry_status check above
+            # (clean_expired=True) already guaranteed availability or raised
+            # 404, so no second exists()/status backend read is needed here.
             results = store.search(hash_key, query)
             return {
                 "hash": hash_key,
