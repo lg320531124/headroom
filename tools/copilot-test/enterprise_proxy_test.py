@@ -110,11 +110,7 @@ try:
             if key in seen:
                 continue
             seen.add(key)
-            ih = r["identity_headers"]
-            print(
-                f"  → {r['url']}  token={r['auth_scheme']}/{r['token_kind']}  "
-                f"integration-id={ih.get('Copilot-Integration-Id') or ih.get('copilot-integration-id') or '-'}"
-            )
+            print(f"  → {r['url']}  token={r['auth_scheme']}/{r['token_kind']}")
     else:
         print("  (no capture written — requests may not have reached the Copilot auth path)")
 finally:

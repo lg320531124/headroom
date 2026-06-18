@@ -1106,8 +1106,11 @@ def _maybe_capture_outbound(url: str, headers: dict[str, str]) -> None:
     API. Lets us tell a Headroom bug (wrong host / integration-id / token kind)
     apart from an upstream entitlement 400.
 
-    No token bytes are ever written or logged: the auth header is reduced to fixed
-    labels (scheme + type prefix) via prefix tests, never a slice of the token.
+    Records only the host + URL + fixed credential labels (scheme + token type
+    prefix). No token bytes and no request headers are written or logged — the
+    auth header is reduced to constant labels via prefix tests, never a slice.
+    (The integration-id / editor-version a request carries are surfaced by the
+    read-only doctor's reconstruction instead.)
     """
 
     if os.environ.get("HEADROOM_COPILOT_DEBUG_OUTBOUND", "").strip().lower() not in (
@@ -1131,18 +1134,11 @@ def _maybe_capture_outbound(url: str, headers: dict[str, str]) -> None:
                 if rest.startswith(known):
                     token_label = known + "***"
                     break
-        identity = {
-            k: v
-            for k, v in headers.items()
-            if k.lower()
-            in ("copilot-integration-id", "editor-version", "editor-plugin-version", "user-agent")
-        }
         record = {
             "host": urlparse(url).netloc,
             "url": url,
             "auth_scheme": scheme_label,
             "token_kind": token_label,
-            "identity_headers": identity,
         }
         default_path = Path.home() / ".headroom" / "copilot_outbound.jsonl"
         out = Path(os.environ.get("HEADROOM_COPILOT_DEBUG_OUTBOUND_FILE", str(default_path)))
@@ -1150,10 +1146,9 @@ def _maybe_capture_outbound(url: str, headers: dict[str, str]) -> None:
         with out.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
         logger.warning(
-            "[copilot-outbound] host=%s integration-id=%s editor=%s token=%s/%s",
+            "[copilot-outbound] host=%s url=%s token=%s/%s",
             record["host"],
-            identity.get("Copilot-Integration-Id") or identity.get("copilot-integration-id") or "-",
-            identity.get("Editor-Version") or identity.get("editor-version") or "-",
+            record["url"],
             scheme_label,
             token_label,
         )
